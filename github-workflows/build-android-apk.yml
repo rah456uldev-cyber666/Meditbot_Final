@@ -1,0 +1,80 @@
+# Builds the Medibot Android app (APK) in the cloud, for free, on every push.
+# Download it from: GitHub repo > Actions > latest "Build Android APK" run > Artifacts > medibot-apk
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, master]
+    paths: ["mobile/**", ".github/workflows/build-android-apk.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # (No setup-android step: GitHub's ubuntu runner already has the Android SDK.)
+
+      - name: Put your secret keys into the app (optional)
+        # Add these in GitHub repo > Settings > Secrets and variables > Actions > New repository secret.
+        # For free email OTP add the EMAILJS_ ones (EMAILJS_PRIVATE_KEY is the Private Key from
+        # EmailJS > Account > API keys). Secret values are trimmed, so stray spaces don't matter.
+        # Any secret you leave out stays empty, and users can still type keys in the app's Settings.
+        env:
+          EMAILJS_SERVICE_ID: ${{ secrets.EMAILJS_SERVICE_ID }}
+          EMAILJS_TEMPLATE_ID: ${{ secrets.EMAILJS_TEMPLATE_ID }}
+          EMAILJS_PUBLIC_KEY: ${{ secrets.EMAILJS_PUBLIC_KEY }}
+          EMAILJS_PRIVATE_KEY: ${{ secrets.EMAILJS_PRIVATE_KEY }}
+          FAST2SMS_API_KEY: ${{ secrets.FAST2SMS_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+        run: |
+          node -e '
+            const e = Object.fromEntries(Object.entries(process.env).map(([k, v]) => [k, String(v || "").trim()])), j = JSON.stringify;
+            const c = {
+              emailjsServiceId: e.EMAILJS_SERVICE_ID || "", emailjsTemplateId: e.EMAILJS_TEMPLATE_ID || "",
+              emailjsPublicKey: e.EMAILJS_PUBLIC_KEY || "", emailjsPrivateKey: e.EMAILJS_PRIVATE_KEY || "",
+              groqApiKey: e.GROQ_API_KEY || "", groqModel: "",
+              fast2smsApiKey: e.FAST2SMS_API_KEY || "",
+              twilioAccountSid: e.TWILIO_ACCOUNT_SID || "", twilioAuthToken: e.TWILIO_AUTH_TOKEN || "",
+              twilioFromNumber: e.TWILIO_FROM_NUMBER || "",
+              ollamaUrl: "", ollamaModel: "llama3.2:3b", defaultCountryCode: "+91"
+            };
+            require("fs").writeFileSync("www/config.js", "window.MB_CONFIG = " + j(c, null, 2) + ";\n");
+            console.log("Keys built in:", Object.keys(c).filter(k => /Key|Sid|Token|From|Id$/.test(k) && c[k]).join(", ") || "none");
+          '
+
+      - name: Install Capacitor
+        run: npm ci
+
+      - name: Copy the app into the Android project
+        run: npx cap sync android
+
+      - name: Build APK
+        working-directory: mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk Medibot.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: medibot-apk
+          path: mobile/Medibot.apk
